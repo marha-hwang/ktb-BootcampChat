@@ -28,6 +28,8 @@ import java.time.LocalDateTime;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.slf4j.MDC;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -48,73 +50,75 @@ public class ChatMessageHandler {
     private final BannedWordChecker bannedWordChecker;
     private final RateLimitService rateLimitService;
     private final MeterRegistry meterRegistry;
-    
+
     @OnEvent(CHAT_MESSAGE)
     public void handleChatMessage(SocketIOClient client, ChatMessageRequest data) {
+
+        // Manual MDC setup for tracing
+        String traceId = UUID.randomUUID().toString();
+        String apiPath = "socket/chat";
+        MDC.put("traceId", traceId);
+        MDC.put("apiPath", apiPath);
+
         Timer.Sample timerSample = Timer.start(meterRegistry);
 
-        if (data == null) {
-            recordError("null_data");
-            client.sendEvent(ERROR, Map.of(
-                    "code", "MESSAGE_ERROR",
-                    "message", "메시지 데이터가 없습니다."
-            ));
-            timerSample.stop(createTimer("error", "null_data"));
-            return;
-        }
-
-        var socketUser = (SocketUser) client.get("user");
-
-        if (socketUser == null) {
-            recordError("session_null");
-            client.sendEvent(ERROR, Map.of(
-                    "code", "SESSION_EXPIRED",
-                    "message", "세션이 만료되었습니다. 다시 로그인해주세요."
-            ));
-            timerSample.stop(createTimer("error", "session_null"));
-            return;
-        }
-
-        SessionValidationResult validation =
-                sessionService.validateSession(socketUser.id(), socketUser.authSessionId());
-        if (!validation.isValid()) {
-            recordError("session_expired");
-            client.sendEvent(ERROR, Map.of(
-                    "code", "SESSION_EXPIRED",
-                    "message", "세션이 만료되었습니다. 다시 로그인해주세요."
-            ));
-            timerSample.stop(createTimer("error", "session_expired"));
-            return;
-        }
-
-        // Rate limit check
-        RateLimitCheckResult rateLimitResult =
-                rateLimitService.checkRateLimit(socketUser.id(), 10000, Duration.ofMinutes(1));
-        if (!rateLimitResult.allowed()) {
-            recordError("rate_limit_exceeded");
-            Counter.builder("socketio.messages.rate_limit")
-                    .description("Socket.IO rate limit exceeded count")
-                    .register(meterRegistry)
-                    .increment();
-            client.sendEvent(ERROR, Map.of(
-                    "code", "RATE_LIMIT_EXCEEDED",
-                    "message", "메시지 전송 횟수 제한을 초과했습니다. 잠시 후 다시 시도해주세요.",
-                    "retryAfter", rateLimitResult.retryAfterSeconds()
-            ));
-            log.warn("Rate limit exceeded for user: {}, retryAfter: {}s",
-                    socketUser.id(), rateLimitResult.retryAfterSeconds());
-            timerSample.stop(createTimer("error", "rate_limit"));
-            return;
-        }
-        
         try {
+            if (data == null) {
+                recordError("null_data");
+                client.sendEvent(ERROR, Map.of(
+                        "code", "MESSAGE_ERROR",
+                        "message", "메시지 데이터가 없습니다."));
+                timerSample.stop(createTimer("error", "null_data"));
+                return;
+            }
+
+            var socketUser = (SocketUser) client.get("user");
+
+            if (socketUser == null) {
+                recordError("session_null");
+                client.sendEvent(ERROR, Map.of(
+                        "code", "SESSION_EXPIRED",
+                        "message", "세션이 만료되었습니다. 다시 로그인해주세요."));
+                timerSample.stop(createTimer("error", "session_null"));
+                return;
+            }
+
+            SessionValidationResult validation = sessionService.validateSession(socketUser.id(),
+                    socketUser.authSessionId());
+            if (!validation.isValid()) {
+                recordError("session_expired");
+                client.sendEvent(ERROR, Map.of(
+                        "code", "SESSION_EXPIRED",
+                        "message", "세션이 만료되었습니다. 다시 로그인해주세요."));
+                timerSample.stop(createTimer("error", "session_expired"));
+                return;
+            }
+
+            // Rate limit check
+            RateLimitCheckResult rateLimitResult = rateLimitService.checkRateLimit(socketUser.id(), 10000,
+                    Duration.ofMinutes(1));
+            if (!rateLimitResult.allowed()) {
+                recordError("rate_limit_exceeded");
+                Counter.builder("socketio.messages.rate_limit")
+                        .description("Socket.IO rate limit exceeded count")
+                        .register(meterRegistry)
+                        .increment();
+                client.sendEvent(ERROR, Map.of(
+                        "code", "RATE_LIMIT_EXCEEDED",
+                        "message", "메시지 전송 횟수 제한을 초과했습니다. 잠시 후 다시 시도해주세요.",
+                        "retryAfter", rateLimitResult.retryAfterSeconds()));
+                log.warn("Rate limit exceeded for user: {}, retryAfter: {}s",
+                        socketUser.id(), rateLimitResult.retryAfterSeconds());
+                timerSample.stop(createTimer("error", "rate_limit"));
+                return;
+            }
+
             User sender = userRepository.findById(socketUser.id()).orElse(null);
             if (sender == null) {
                 recordError("user_not_found");
                 client.sendEvent(ERROR, Map.of(
-                    "code", "MESSAGE_ERROR",
-                    "message", "User not found"
-                ));
+                        "code", "MESSAGE_ERROR",
+                        "message", "User not found"));
                 timerSample.stop(createTimer("error", "user_not_found"));
                 return;
             }
@@ -124,9 +128,8 @@ public class ChatMessageHandler {
             if (room == null || !room.getParticipantIds().contains(socketUser.id())) {
                 recordError("room_access_denied");
                 client.sendEvent(ERROR, Map.of(
-                    "code", "MESSAGE_ERROR",
-                    "message", "채팅방 접근 권한이 없습니다."
-                ));
+                        "code", "MESSAGE_ERROR",
+                        "message", "채팅방 접근 권한이 없습니다."));
                 timerSample.stop(createTimer("error", "room_access_denied"));
                 return;
             }
@@ -134,14 +137,13 @@ public class ChatMessageHandler {
             MessageContent messageContent = data.getParsedContent();
 
             log.debug("Message received - type: {}, room: {}, userId: {}, hasFileData: {}",
-                data.getMessageType(), roomId, socketUser.id(), data.hasFileData());
+                    data.getMessageType(), roomId, socketUser.id(), data.hasFileData());
 
             if (bannedWordChecker.containsBannedWord(messageContent.getTrimmedContent())) {
                 recordError("banned_word");
                 client.sendEvent(ERROR, Map.of(
                         "code", "MESSAGE_REJECTED",
-                        "message", "금칙어가 포함된 메시지는 전송할 수 없습니다."
-                ));
+                        "message", "금칙어가 포함된 메시지는 전송할 수 없습니다."));
                 timerSample.stop(createTimer("error", "banned_word"));
                 return;
             }
@@ -154,7 +156,8 @@ public class ChatMessageHandler {
             };
 
             if (message == null) {
-                log.warn("Empty message - ignoring. room: {}, userId: {}, messageType: {}", roomId, socketUser.id(), messageType);
+                log.warn("Empty message - ignoring. room: {}, userId: {}, messageType: {}", roomId, socketUser.id(),
+                        messageType);
                 timerSample.stop(createTimer("ignored", messageType));
                 return;
             }
@@ -174,20 +177,23 @@ public class ChatMessageHandler {
             timerSample.stop(createTimer("success", messageType));
 
             log.debug("Message processed - messageId: {}, type: {}, room: {}",
-                savedMessage.getId(), savedMessage.getType(), roomId);
+                    savedMessage.getId(), savedMessage.getType(), roomId);
 
         } catch (Exception e) {
             recordError("exception");
             log.error("Message handling error", e);
             client.sendEvent(ERROR, Map.of(
-                "code", "MESSAGE_ERROR",
-                "message", e.getMessage() != null ? e.getMessage() : "메시지 전송 중 오류가 발생했습니다."
-            ));
+                    "code", "MESSAGE_ERROR",
+                    "message", e.getMessage() != null ? e.getMessage() : "메시지 전송 중 오류가 발생했습니다."));
             timerSample.stop(createTimer("error", "exception"));
+        } finally {
+            MDC.remove("traceId");
+            MDC.remove("apiPath");
         }
     }
 
-    private Message handleFileMessage(String roomId, String userId, MessageContent messageContent, Map<String, Object> fileData) {
+    private Message handleFileMessage(String roomId, String userId, MessageContent messageContent,
+            Map<String, Object> fileData) {
         if (fileData == null || fileData.get("_id") == null) {
             throw new IllegalArgumentException("파일 데이터가 올바르지 않습니다.");
         }
@@ -207,7 +213,7 @@ public class ChatMessageHandler {
         message.setContent(messageContent.getTrimmedContent());
         message.setTimestamp(LocalDateTime.now());
         message.setMentions(messageContent.aiMentions());
-        
+
         // 메타데이터는 Map<String, Object>
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("fileType", file.getMimetype());

@@ -12,6 +12,7 @@ import com.ktb.chatapp.websocket.socketio.handler.StreamingSession;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationEventPublisher;
@@ -49,32 +50,33 @@ public class AiService {
     }
 
     private void startStreaming(String roomId, String userId, String aiType, String query) {
-        
+
         // AI 스트리밍 세션 생성 - messageId는 타입과 타임스탬프 조합
         var timestamp = System.currentTimeMillis();
         String messageId = aiType + "-" + timestamp;
 
         log.info("AI response started - messageId: {}, room: {}, aiType: {}, query: {}",
-            messageId, roomId, aiType, query);
-        
+                messageId, roomId, aiType, query);
+
         // AI 스트리밍 시작 이벤트 발행
         eventPublisher.publishEvent(new AiMessageStartEvent(
-            this, roomId, messageId, aiType, timestamp
-        ));
-        
+                this, roomId, messageId, aiType, timestamp));
+
         // 스트리밍 세션 초기화
         StreamingSession session = StreamingSession.builder()
-            .messageId(messageId)
-            .roomId(roomId)
-            .userId(userId)
-            .aiType(aiType)
-            .timestamp(timestamp)
-            .query(query)
-            .build();
-        
-        
+                .messageId(messageId)
+                .roomId(roomId)
+                .userId(userId)
+                .aiType(aiType)
+                .timestamp(timestamp)
+                .query(query)
+                .build();
+
+        // 현재 MDC 컨텍스트 캡처 (AOP 덕분에 traceId, apiPath가 들어있음)
+        Map<String, String> mdcContext = MDC.getCopyOfContextMap();
+
         streamResponse(session)
-                .subscribe(new AiStreamHandler(session, eventPublisher));
+                .subscribe(new AiStreamHandler(session, eventPublisher, mdcContext));
     }
 
     Flux<ChunkData> streamResponse(StreamingSession session) {
@@ -106,21 +108,20 @@ public class AiService {
     @EventListener
     public void onAiMessageCompleteEvent(AiMessageCompleteEvent event) {
         try {
-            // 메시지 저장
+            // 메시지 저장 (이 시점에는 AiStreamHandler가 복원해준 MDC가 적용되어 있음)
             Message savedMessage = messageRepository.save(getMessage(event));
             log.info("AI message saved - messageId: {}, savedId: {}, roomId: {}",
-                event.getMessageId(), savedMessage.getId(), event.getRoomId());
+                    event.getMessageId(), savedMessage.getId(), event.getRoomId());
 
             // savedMessageId를 포함한 새로운 이벤트 발행
             eventPublisher.publishEvent(new AiMessageSavedEvent(
-                this, event, savedMessage.getId()
-            ));
+                    this, event, savedMessage.getId()));
         } catch (Exception e) {
             log.error("Failed to save AI message - messageId: {}, roomId: {}",
-                event.getMessageId(), event.getRoomId(), e);
+                    event.getMessageId(), event.getRoomId(), e);
         }
     }
-    
+
     private Message getMessage(AiMessageCompleteEvent event) {
         Message aiMessage = new Message();
         aiMessage.setRoomId(event.getRoomId());
@@ -128,11 +129,10 @@ public class AiService {
         aiMessage.setType(MessageType.ai);
         aiMessage.setAiType(event.getAiType());
         aiMessage.setTimestamp(event.getStartDateTime());
-        
+
         Map<String, Object> metadata = Map.of(
                 "query", event.getQuery(),
-                "generationTime", event.getGenerationTime()
-        );
+                "generationTime", event.getGenerationTime());
         aiMessage.setMetadata(metadata);
         return aiMessage;
     }
