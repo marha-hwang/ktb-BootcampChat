@@ -10,7 +10,7 @@ import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
 import jakarta.annotation.Nullable;
 import java.time.LocalDateTime;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -66,11 +66,27 @@ public class MessageLoader {
         
         var messageIds = sortedMessages.stream().map(Message::getId).toList();
         messageReadStatusService.updateReadStatus(messageIds, userId);
-        
+
+        //  User Mapping
+        //  (1) senderId 목록 추출
+        Set<String> senderIds = sortedMessages.stream()
+                .map(Message::getSenderId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        // (2) 유저를 IN 쿼리 한 번으로 조회
+        List<User> users = senderIds.isEmpty()
+                ? Collections.emptyList()
+                : userRepository.findByIdIn(senderIds);
+
+        // (3) ID → User 매핑
+        Map<String, User> userMap = users.stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
         // 메시지 응답 생성
         List<MessageResponse> messageResponses = sortedMessages.stream()
                 .map(message -> {
-                    var user = findUserById(message.getSenderId());
+                    var user = userMap.get(message.getSenderId());
                     return messageResponseMapper.mapToMessageResponse(message, user);
                 })
                 .collect(Collectors.toList());
@@ -86,15 +102,4 @@ public class MessageLoader {
                 .build();
     }
 
-    /**
-     * AI 경우 null 반환 가능
-     */
-    @Nullable
-    private User findUserById(String id) {
-        if (id == null) {
-            return null;
-        }
-        return userRepository.findById(id)
-                .orElse(null);
-    }
 }
