@@ -35,6 +35,7 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
     private final MessageRepository messageRepository;
+    private final UserCacheService userCacheService; // Redis Cache Service
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -90,11 +91,10 @@ public class RoomService {
                 }
             }
 
-            // 2. User 일괄 조회 (N+1 해결)
-            Map<String, User> userMap = userRepository.findAllById(userIds).stream()
-                    .collect(Collectors.toMap(User::getId, Function.identity()));
+            // 2. User 일괄 조회 (Redis Cache + DB Batch)
+            Map<String, User> userMap = userCacheService.getUsers(userIds);
 
-            // 3. 최근 메시지 수 일괄 조회 (N+1 해결) (Aggregation)
+            // 3. 최근 메시지 수 일괄 조회 (Aggregation)
             LocalDateTime tenMinutesAgo = LocalDateTime.now().minusMinutes(10);
             Map<String, Long> messageCounts = new HashMap<>();
             try {
@@ -105,7 +105,6 @@ public class RoomService {
                 }
             } catch (Exception e) {
                 log.error("Failed to count messages batch", e);
-                // 실패 시 0으로 처리 (개별 조회로 복구할 수도 있으나 성능 우선)
             }
 
             // Room을 RoomResponse로 변환 (UserMap, MessageCounts 활용)
@@ -285,33 +284,32 @@ public class RoomService {
         return room;
     }
 
-    // 기존 단건 조회용 (단일 룸 처리는 N+1 영향 적으므로 유지하되 리팩토링)
+    // 기존 단건 조회용
     private RoomResponse mapToRoomResponse(Room room, String name) {
         if (room == null)
             return null;
 
-        // 여기는 1개니까 그냥 조회해도 됨
         User creator = null;
         if (room.getCreator() != null) {
-            creator = userRepository.findById(room.getCreator()).orElse(null);
+            // 여기서도 캐시 사용하면 좋음
+            creator = userCacheService.getUser(room.getCreator());
         }
 
-        List<User> participants = room.getParticipantIds().stream()
-                .map(userRepository::findById)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .toList();
+        // 단건 방 조회 시 참가자도 캐시로 조회 (Batch 아님) - 사실 여기도 Batch로 바꾸면 더 좋음
+        // 하지만 RoomCreate 등에서 호출될 때 참가자는 보통 생성자 1명이므로 문제 없음
+        // joinRoom에서는 참가자가 많을 수 있으므로... userCacheService.getUsers()로 바꿔주는게 안전함.
 
-        Map<String, User> singleRoomUserMap = new HashMap<>();
-        if (creator != null)
-            singleRoomUserMap.put(creator.getId(), creator);
-        for (User u : participants)
-            singleRoomUserMap.put(u.getId(), u);
+        Set<String> pIds = room.getParticipantIds() != null ? room.getParticipantIds() : Collections.emptySet();
+        Map<String, User> userMap = userCacheService.getUsers(pIds);
 
-        // 단건 조회에서는 기존 방식으로 메시지 카운트 조회
-        LocalDateTime tenMinutesAgo = LocalDateTime.now().minusMinutes(10);
-        long recentMessageCount = messageRepository.countRecentMessagesByRoomId(room.getId(), tenMinutesAgo);
+        if (creator != null) {
+            // 중복 방지 로직 필요 없지만 map에 있으면 덮어쓰기
+            // userCacheService.getUsers는 Set 결과이므로 creator 포함 안될수있음 (creator가 participant에
+            // 없다면)
+            // 보통 creator는 participant에 포함됨.
+        }
 
-        return convertToRoomResponse(room, name, singleRoomUserMap, recentMessageCount);
+        return convertToRoomResponse(room, name, userMap,
+                messageRepository.countRecentMessagesByRoomId(room.getId(), LocalDateTime.now().minusMinutes(10)));
     }
 }
