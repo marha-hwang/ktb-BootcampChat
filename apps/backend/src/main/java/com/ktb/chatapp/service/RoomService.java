@@ -9,10 +9,14 @@ import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.repository.UserRepository;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,8 +52,8 @@ public class RoomService {
 
             // 정렬 방향 설정
             Sort.Direction direction = "desc".equals(pageRequest.getSortOrder())
-                ? Sort.Direction.DESC
-                : Sort.Direction.ASC;
+                    ? Sort.Direction.DESC
+                    : Sort.Direction.ASC;
 
             // 정렬 필드 매핑 (participantsCount는 특별 처리 필요)
             String sortField = pageRequest.getSortField();
@@ -59,52 +63,114 @@ public class RoomService {
 
             // Pageable 객체 생성
             PageRequest springPageRequest = PageRequest.of(
-                pageRequest.getPage(),
-                pageRequest.getPageSize(),
-                Sort.by(direction, sortField)
-            );
+                    pageRequest.getPage(),
+                    pageRequest.getPageSize(),
+                    Sort.by(direction, sortField));
 
             // 검색어가 있는 경우와 없는 경우 분리
             Page<Room> roomPage;
             if (pageRequest.getSearch() != null && !pageRequest.getSearch().trim().isEmpty()) {
                 roomPage = roomRepository.findByNameContainingIgnoreCase(
-                    pageRequest.getSearch().trim(), springPageRequest);
+                        pageRequest.getSearch().trim(), springPageRequest);
             } else {
                 roomPage = roomRepository.findAll(springPageRequest);
             }
 
-            // Room을 RoomResponse로 변환
-            List<RoomResponse> roomResponses = roomPage.getContent().stream()
-                .map(room -> mapToRoomResponse(room, name))
-                .collect(Collectors.toList());
+            List<Room> rooms = roomPage.getContent();
+            List<String> roomIds = rooms.stream().map(Room::getId).toList();
+
+            // 1. 모든 관련 User ID 수집 (Creator + Participants)
+            Set<String> userIds = new HashSet<>();
+            for (Room room : rooms) {
+                if (room.getCreator() != null) {
+                    userIds.add(room.getCreator());
+                }
+                if (room.getParticipantIds() != null) {
+                    userIds.addAll(room.getParticipantIds());
+                }
+            }
+
+            // 2. User 일괄 조회 (N+1 해결)
+            Map<String, User> userMap = userRepository.findAllById(userIds).stream()
+                    .collect(Collectors.toMap(User::getId, Function.identity()));
+
+            // 3. 최근 메시지 수 일괄 조회 (N+1 해결) (Aggregation)
+            LocalDateTime tenMinutesAgo = LocalDateTime.now().minusMinutes(10);
+            Map<String, Long> messageCounts = new HashMap<>();
+            try {
+                List<MessageCountResult> results = messageRepository.countRecentMessagesByRoomIds(roomIds,
+                        tenMinutesAgo);
+                for (MessageCountResult result : results) {
+                    messageCounts.put(result.getRoomId(), result.getCount());
+                }
+            } catch (Exception e) {
+                log.error("Failed to count messages batch", e);
+                // 실패 시 0으로 처리 (개별 조회로 복구할 수도 있으나 성능 우선)
+            }
+
+            // Room을 RoomResponse로 변환 (UserMap, MessageCounts 활용)
+            List<RoomResponse> roomResponses = rooms.stream()
+                    .map(room -> convertToRoomResponse(room, name, userMap,
+                            messageCounts.getOrDefault(room.getId(), 0L)))
+                    .collect(Collectors.toList());
 
             // 메타데이터 생성
             PageMetadata metadata = PageMetadata.builder()
-                .total(roomPage.getTotalElements())
-                .page(pageRequest.getPage())
-                .pageSize(pageRequest.getPageSize())
-                .totalPages(roomPage.getTotalPages())
-                .hasMore(roomPage.hasNext())
-                .currentCount(roomResponses.size())
-                .sort(PageMetadata.SortInfo.builder()
-                    .field(pageRequest.getSortField())
-                    .order(pageRequest.getSortOrder())
-                    .build())
-                .build();
+                    .total(roomPage.getTotalElements())
+                    .page(pageRequest.getPage())
+                    .pageSize(pageRequest.getPageSize())
+                    .totalPages(roomPage.getTotalPages())
+                    .hasMore(roomPage.hasNext())
+                    .currentCount(roomResponses.size())
+                    .sort(PageMetadata.SortInfo.builder()
+                            .field(pageRequest.getSortField())
+                            .order(pageRequest.getSortOrder())
+                            .build())
+                    .build();
 
             return RoomsResponse.builder()
-                .success(true)
-                .data(roomResponses)
-                .metadata(metadata)
-                .build();
+                    .success(true)
+                    .data(roomResponses)
+                    .metadata(metadata)
+                    .build();
 
         } catch (Exception e) {
             log.error("방 목록 조회 에러", e);
             return RoomsResponse.builder()
-                .success(false)
-                .data(List.of())
-                .build();
+                    .success(false)
+                    .data(List.of())
+                    .build();
         }
+    }
+
+    private RoomResponse convertToRoomResponse(Room room, String currentUserName, Map<String, User> userMap,
+            long recentMessageCount) {
+        User creator = room.getCreator() != null ? userMap.get(room.getCreator()) : null;
+
+        List<UserResponse> participants = room.getParticipantIds().stream()
+                .map(userMap::get)
+                .filter(java.util.Objects::nonNull)
+                .map(p -> UserResponse.builder()
+                        .id(p.getId())
+                        .name(p.getName() != null ? p.getName() : "알 수 없음")
+                        .email(p.getEmail() != null ? p.getEmail() : "")
+                        .build())
+                .toList();
+
+        return RoomResponse.builder()
+                .id(room.getId())
+                .name(room.getName() != null ? room.getName() : "제목 없음")
+                .hasPassword(room.isHasPassword())
+                .creator(creator != null ? UserResponse.builder()
+                        .id(creator.getId())
+                        .name(creator.getName() != null ? creator.getName() : "알 수 없음")
+                        .email(creator.getEmail() != null ? creator.getEmail() : "")
+                        .build() : null)
+                .participants(participants)
+                .createdAtDateTime(room.getCreatedAt())
+                .isCreator(creator != null && creator.getId().equals(currentUserName))
+                .recentMessageCount((int) recentMessageCount)
+                .build();
     }
 
     public HealthResponse getHealthStatus() {
@@ -134,28 +200,28 @@ public class RoomService {
             // 서비스 상태 정보 구성
             Map<String, HealthResponse.ServiceHealth> services = new HashMap<>();
             services.put("database", HealthResponse.ServiceHealth.builder()
-                .connected(isMongoConnected)
-                .latency(latency)
-                .build());
+                    .connected(isMongoConnected)
+                    .latency(latency)
+                    .build());
 
             return HealthResponse.builder()
-                .success(true)
-                .services(services)
-                .lastActivity(lastActivity)
-                .build();
+                    .success(true)
+                    .services(services)
+                    .lastActivity(lastActivity)
+                    .build();
 
         } catch (Exception e) {
             log.error("Health check 실행 중 에러 발생", e);
             return HealthResponse.builder()
-                .success(false)
-                .services(new HashMap<>())
-                .build();
+                    .success(false)
+                    .services(new HashMap<>())
+                    .build();
         }
     }
 
     public Room createRoom(CreateRoomRequest createRoomRequest, String name) {
         User creator = userRepository.findByEmail(name)
-            .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다: " + name));
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다: " + name));
 
         Room room = new Room();
         room.setName(createRoomRequest.getName().trim());
@@ -168,7 +234,7 @@ public class RoomService {
         }
 
         Room savedRoom = roomRepository.save(room);
-        
+
         // Publish event for room created
         try {
             RoomResponse roomResponse = mapToRoomResponse(savedRoom, name);
@@ -176,7 +242,7 @@ public class RoomService {
         } catch (Exception e) {
             log.error("roomCreated 이벤트 발행 실패", e);
         }
-        
+
         return savedRoom;
     }
 
@@ -192,7 +258,7 @@ public class RoomService {
 
         Room room = roomOpt.get();
         User user = userRepository.findByEmail(name)
-            .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다: " + name));
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다: " + name));
 
         // 비밀번호 확인
         if (room.isHasPassword()) {
@@ -207,7 +273,7 @@ public class RoomService {
             room.getParticipantIds().add(user.getId());
             room = roomRepository.save(room);
         }
-        
+
         // Publish event for room updated
         try {
             RoomResponse roomResponse = mapToRoomResponse(room, name);
@@ -219,44 +285,33 @@ public class RoomService {
         return room;
     }
 
+    // 기존 단건 조회용 (단일 룸 처리는 N+1 영향 적으므로 유지하되 리팩토링)
     private RoomResponse mapToRoomResponse(Room room, String name) {
-        if (room == null) return null;
+        if (room == null)
+            return null;
 
+        // 여기는 1개니까 그냥 조회해도 됨
         User creator = null;
         if (room.getCreator() != null) {
             creator = userRepository.findById(room.getCreator()).orElse(null);
         }
 
         List<User> participants = room.getParticipantIds().stream()
-            .map(userRepository::findById)
-            .filter(Optional::isPresent)
-            .map(Optional::get)
-            .toList();
+                .map(userRepository::findById)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .toList();
 
-        // 최근 10분간 메시지 수 조회
+        Map<String, User> singleRoomUserMap = new HashMap<>();
+        if (creator != null)
+            singleRoomUserMap.put(creator.getId(), creator);
+        for (User u : participants)
+            singleRoomUserMap.put(u.getId(), u);
+
+        // 단건 조회에서는 기존 방식으로 메시지 카운트 조회
         LocalDateTime tenMinutesAgo = LocalDateTime.now().minusMinutes(10);
         long recentMessageCount = messageRepository.countRecentMessagesByRoomId(room.getId(), tenMinutesAgo);
 
-        return RoomResponse.builder()
-            .id(room.getId())
-            .name(room.getName() != null ? room.getName() : "제목 없음")
-            .hasPassword(room.isHasPassword())
-            .creator(creator != null ? UserResponse.builder()
-                .id(creator.getId())
-                .name(creator.getName() != null ? creator.getName() : "알 수 없음")
-                .email(creator.getEmail() != null ? creator.getEmail() : "")
-                .build() : null)
-            .participants(participants.stream()
-                .filter(p -> p != null && p.getId() != null)
-                .map(p -> UserResponse.builder()
-                    .id(p.getId())
-                    .name(p.getName() != null ? p.getName() : "알 수 없음")
-                    .email(p.getEmail() != null ? p.getEmail() : "")
-                    .build())
-                .collect(Collectors.toList()))
-            .createdAtDateTime(room.getCreatedAt())
-            .isCreator(creator != null && creator.getId().equals(name))
-            .recentMessageCount((int) recentMessageCount)
-            .build();
+        return convertToRoomResponse(room, name, singleRoomUserMap, recentMessageCount);
     }
 }
