@@ -178,4 +178,43 @@ public class S3FileService implements FileService {
             return false;
         }
     }
+
+    @Override
+    public void deleteFile(String fileUrl) {
+        if (fileUrl == null || fileUrl.isEmpty()) {
+            return;
+        }
+
+        try {
+            // URL에서 Key 추출 (예: https://bucket.s3.region.amazonaws.com/key)
+            // 간단하게 마지막 슬래시 뒤의 파일명만 추출하거나, URL 구조에 따라 파싱 필요.
+            // 여기서는 전체 URL이 들어온다고 가정하고, 키 추출 시도.
+
+            // 만약 profileImage가 /uploads/... 로컬 경로라면 무시 (단, 마이그레이션 과도기엔 필요할 수 있음)
+            if (fileUrl.startsWith("/")) {
+                return; // S3 서비스에서는 로컬 경로 무시
+            }
+
+            String key = fileUrl.substring(fileUrl.lastIndexOf("/") + 1);
+            // 만약 "profiles/" 같은 서브디렉토리가 키에 포함되어야 한다면 더 정교한 파싱 필요.
+            // storeFile에서 "profiles/" + safeFileName을 저장하고 URL을 반환했으므로,
+            // URL의 마지막 부분만으로는 폴더 경로가 유실될 수 있음.
+
+            // storeFile의 반환값: s3Client.utilities().getUrl(...).toExternalForm()
+            // URL 구조: https://bucket.s3.region.amazonaws.com/profiles/filename
+            // 따라서 bucketName 뒤의 경로를 가져와야 함.
+
+            java.net.URL url = new java.net.URL(fileUrl);
+            String path = url.getPath(); // /profiles/filename
+            if (path.startsWith("/")) {
+                path = path.substring(1); // profiles/filename
+            }
+
+            s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucketName).key(path).build());
+            log.info("S3 파일 삭제 성공: {}", path);
+
+        } catch (Exception e) {
+            log.warn("S3 파일 삭제 실패 (URL: {}): {}", fileUrl, e.getMessage());
+        }
+    }
 }

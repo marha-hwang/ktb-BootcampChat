@@ -12,5 +12,6 @@ public interface FileService {
     Resource loadFileAsResource(String fileName, String requesterId);
 
     boolean deleteFile(String fileId, String requesterId);
-}
 
+    void deleteFile(String fileUrl);
+}

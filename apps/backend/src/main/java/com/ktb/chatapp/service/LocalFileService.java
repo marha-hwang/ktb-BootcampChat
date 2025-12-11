@@ -33,15 +33,15 @@ public class LocalFileService implements FileService {
     private final RoomRepository roomRepository;
 
     public LocalFileService(@Value("${file.upload-dir:uploads}") String uploadDir,
-                      FileRepository fileRepository,
-                      MessageRepository messageRepository,
-                      RoomRepository roomRepository) {
+            FileRepository fileRepository,
+            MessageRepository messageRepository,
+            RoomRepository roomRepository) {
         this.fileRepository = fileRepository;
         this.messageRepository = messageRepository;
         this.roomRepository = roomRepository;
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
     }
-    
+
     @PostConstruct
     public void init() {
         try {
@@ -206,6 +206,20 @@ public class LocalFileService implements FileService {
         } catch (Exception e) {
             log.error("파일 삭제 실패: {}", e.getMessage(), e);
             throw new RuntimeException("파일 삭제 중 오류가 발생했습니다.", e);
+        }
+    }
+
+    @Override
+    public void deleteFile(String fileUrl) {
+        // LocalFileService는 /api/uploads/... 경로를 처리
+        try {
+            if (fileUrl != null && fileUrl.startsWith("/uploads/")) {
+                String filename = fileUrl.substring("/uploads/".length());
+                Path filePath = this.fileStorageLocation.resolve(filename);
+                Files.deleteIfExists(filePath);
+            }
+        } catch (IOException e) {
+            log.error("로컬 파일 삭제 실패: {}", e.getMessage());
         }
     }
 }
