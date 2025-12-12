@@ -10,8 +10,11 @@ import com.ktb.chatapp.repository.FileRepository;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
+import com.ktb.chatapp.service.UserCacheService;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.IntStream;
 import net.datafaker.Faker;
 import org.junit.jupiter.api.AfterEach;
@@ -20,14 +23,17 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest
 @Import(MongoTestContainer.class)
@@ -49,32 +55,39 @@ class MessageLoaderIntegrationTest {
     @MockitoSpyBean
     private MessageReadStatusService messageReadStatusService;
 
+    // UserCacheService Mocking: Redis 연결 문제 피하기 위해
+    @MockBean
+    private UserCacheService userCacheService;
+
     private MessageLoader messageLoader;
     private Faker faker;
     private String roomId;
     private String userId;
-    
+
     @BeforeEach
     void setUp() {
         faker = new Faker();
         roomId = faker.internet().uuid();
         userId = faker.internet().uuid();
 
-        // MessageLoader 인스턴스 생성
-        messageLoader = new MessageLoader(
-                messageRepository,
-                userRepository,
-                new MessageResponseMapper(fileRepository),
-                messageReadStatusService
-        );
-
-        // 테스트 사용자 생성 및 저장
+        // 테스트 메시지가 참조할 User 설정
         User testUser = User.builder()
                 .id(userId)
                 .name(faker.name().fullName())
                 .email(faker.internet().emailAddress())
                 .build();
         userRepository.save(testUser);
+
+        // UserCacheService Mock 동작 설정
+        when(userCacheService.getUsers(anySet())).thenReturn(Map.of(userId, testUser));
+        when(userCacheService.getUser(userId)).thenReturn(testUser);
+
+        // MessageLoader 인스턴스 생성
+        messageLoader = new MessageLoader(
+                messageRepository,
+                userCacheService,
+                new MessageResponseMapper(fileRepository),
+                messageReadStatusService);
 
         // MessageReadStatusService mock 설정
         doNothing().when(messageReadStatusService).updateReadStatus(anyList(), anyString());

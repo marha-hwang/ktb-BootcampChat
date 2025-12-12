@@ -6,11 +6,12 @@ import com.ktb.chatapp.dto.MessageResponse;
 import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.MessageRepository;
-import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
-import jakarta.annotation.Nullable;
+import com.ktb.chatapp.service.UserCacheService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,7 +29,7 @@ import static java.util.Collections.emptyList;
 public class MessageLoader {
 
     private final MessageRepository messageRepository;
-    private final UserRepository userRepository;
+    private final UserCacheService userCacheService; // Redis Cache
     private final MessageResponseMapper messageResponseMapper;
     private final MessageReadStatusService messageReadStatusService;
 
@@ -39,7 +40,8 @@ public class MessageLoader {
      */
     public FetchMessagesResponse loadMessages(FetchMessagesRequest data, String userId) {
         try {
-            return loadMessagesInternal(data.roomId(), data.limit(BATCH_SIZE), data.before(LocalDateTime.now()), userId);
+            return loadMessagesInternal(data.roomId(), data.limit(BATCH_SIZE), data.before(LocalDateTime.now()),
+                    userId);
         } catch (Exception e) {
             log.error("Error loading initial messages for room {}", data.roomId(), e);
             return FetchMessagesResponse.builder()
@@ -63,14 +65,23 @@ public class MessageLoader {
 
         // DESC로 조회했으므로 ASC로 재정렬 (채팅 UI 표시 순서)
         List<Message> sortedMessages = messages.reversed();
-        
+
         var messageIds = sortedMessages.stream().map(Message::getId).toList();
         messageReadStatusService.updateReadStatus(messageIds, userId);
-        
-        // 메시지 응답 생성
+
+        // 1. Collect all sender IDs
+        Set<String> senderIds = sortedMessages.stream()
+                .map(Message::getSenderId)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toSet());
+
+        // 2. Fetch users using Smart Cache (Redis + DB)
+        Map<String, User> userMap = userCacheService.getUsers(senderIds);
+
+        // 3. Map messages to responses using the user map
         List<MessageResponse> messageResponses = sortedMessages.stream()
                 .map(message -> {
-                    var user = findUserById(message.getSenderId());
+                    User user = message.getSenderId() != null ? userMap.get(message.getSenderId()) : null;
                     return messageResponseMapper.mapToMessageResponse(message, user);
                 })
                 .collect(Collectors.toList());
@@ -84,17 +95,5 @@ public class MessageLoader {
                 .messages(messageResponses)
                 .hasMore(hasMore)
                 .build();
-    }
-
-    /**
-     * AI 경우 null 반환 가능
-     */
-    @Nullable
-    private User findUserById(String id) {
-        if (id == null) {
-            return null;
-        }
-        return userRepository.findById(id)
-                .orElse(null);
     }
 }

@@ -36,11 +36,11 @@ public class UserService {
     private long maxProfileImageSize;
 
     private static final List<String> ALLOWED_EXTENSIONS = Arrays.asList(
-            "jpg", "jpeg", "png", "gif", "webp"
-    );
+            "jpg", "jpeg", "png", "gif", "webp");
 
     /**
      * 현재 사용자 프로필 조회
+     * 
      * @param email 사용자 이메일
      */
     public UserResponse getCurrentUserProfile(String email) {
@@ -51,6 +51,7 @@ public class UserService {
 
     /**
      * 사용자 프로필 업데이트
+     * 
      * @param email 사용자 이메일
      */
     public UserResponse updateUserProfile(String email, UpdateProfileRequest request) {
@@ -69,6 +70,7 @@ public class UserService {
 
     /**
      * 프로필 이미지 업로드
+     * 
      * @param email 사용자 이메일
      */
     public ProfileImageResponse uploadProfileImage(String email, MultipartFile file) {
@@ -97,8 +99,7 @@ public class UserService {
         return new ProfileImageResponse(
                 true,
                 "프로필 이미지가 업데이트되었습니다.",
-                profileImageUrl
-        );
+                profileImageUrl);
     }
 
     /**
@@ -148,23 +149,17 @@ public class UserService {
      */
     private void deleteOldProfileImage(String profileImageUrl) {
         try {
-            if (profileImageUrl != null && profileImageUrl.startsWith("/uploads/")) {
-                // URL에서 파일명 추출
-                String filename = profileImageUrl.substring("/uploads/".length());
-                Path filePath = Paths.get(uploadDir, filename);
-
-                if (Files.exists(filePath)) {
-                    Files.delete(filePath);
-                    log.info("기존 프로필 이미지 삭제 완료: {}", filename);
-                }
+            if (profileImageUrl != null && !profileImageUrl.isEmpty()) {
+                fileService.deleteFile(profileImageUrl);
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             log.warn("기존 프로필 이미지 삭제 실패: {}", e.getMessage());
         }
     }
 
     /**
      * 프로필 이미지 삭제
+     * 
      * @param email 사용자 이메일
      */
     public void deleteProfileImage(String email) {
@@ -182,6 +177,7 @@ public class UserService {
 
     /**
      * 회원 탈퇴 처리
+     * 
      * @param email 사용자 이메일
      */
     public void deleteUserAccount(String email) {

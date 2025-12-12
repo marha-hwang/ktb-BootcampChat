@@ -46,15 +46,11 @@ public class FileController {
      */
     @Operation(summary = "파일 업로드", description = "파일을 업로드합니다. 최대 50MB까지 가능합니다.")
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "파일 업로드 성공"),
-        @ApiResponse(responseCode = "400", description = "잘못된 파일",
-            content = @Content(schema = @Schema(implementation = StandardResponse.class))),
-        @ApiResponse(responseCode = "401", description = "인증 실패",
-            content = @Content(schema = @Schema(implementation = StandardResponse.class))),
-        @ApiResponse(responseCode = "413", description = "파일 크기 초과",
-            content = @Content(schema = @Schema(implementation = StandardResponse.class))),
-        @ApiResponse(responseCode = "500", description = "서버 내부 오류",
-            content = @Content(schema = @Schema(implementation = StandardResponse.class)))
+            @ApiResponse(responseCode = "200", description = "파일 업로드 성공"),
+            @ApiResponse(responseCode = "400", description = "잘못된 파일", content = @Content(schema = @Schema(implementation = StandardResponse.class))),
+            @ApiResponse(responseCode = "401", description = "인증 실패", content = @Content(schema = @Schema(implementation = StandardResponse.class))),
+            @ApiResponse(responseCode = "413", description = "파일 크기 초과", content = @Content(schema = @Schema(implementation = StandardResponse.class))),
+            @ApiResponse(responseCode = "500", description = "서버 내부 오류", content = @Content(schema = @Schema(implementation = StandardResponse.class)))
     })
     @PostMapping("/upload")
     public ResponseEntity<?> uploadFile(
@@ -70,7 +66,7 @@ public class FileController {
                 Map<String, Object> response = new HashMap<>();
                 response.put("success", true);
                 response.put("message", "파일 업로드 성공");
-                
+
                 Map<String, Object> fileData = new HashMap<>();
                 fileData.put("_id", result.getFile().getId());
                 fileData.put("filename", result.getFile().getFilename());
@@ -78,7 +74,7 @@ public class FileController {
                 fileData.put("mimetype", result.getFile().getMimetype());
                 fileData.put("size", result.getFile().getSize());
                 fileData.put("uploadDate", result.getFile().getUploadDate());
-                
+
                 response.put("file", fileData);
 
                 return ResponseEntity.ok(response);
@@ -104,15 +100,11 @@ public class FileController {
      */
     @Operation(summary = "파일 다운로드", description = "업로드된 파일을 다운로드합니다. 본인이 업로드한 파일만 다운로드 가능합니다.")
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "파일 다운로드 성공"),
-        @ApiResponse(responseCode = "401", description = "인증 실패",
-            content = @Content(schema = @Schema(implementation = StandardResponse.class))),
-        @ApiResponse(responseCode = "403", description = "권한 없음",
-            content = @Content(schema = @Schema(implementation = StandardResponse.class))),
-        @ApiResponse(responseCode = "404", description = "파일을 찾을 수 없음",
-            content = @Content(schema = @Schema(implementation = StandardResponse.class))),
-        @ApiResponse(responseCode = "500", description = "서버 내부 오류",
-            content = @Content(schema = @Schema(implementation = StandardResponse.class)))
+            @ApiResponse(responseCode = "200", description = "파일 다운로드 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 실패", content = @Content(schema = @Schema(implementation = StandardResponse.class))),
+            @ApiResponse(responseCode = "403", description = "권한 없음", content = @Content(schema = @Schema(implementation = StandardResponse.class))),
+            @ApiResponse(responseCode = "404", description = "파일을 찾을 수 없음", content = @Content(schema = @Schema(implementation = StandardResponse.class))),
+            @ApiResponse(responseCode = "500", description = "서버 내부 오류", content = @Content(schema = @Schema(implementation = StandardResponse.class)))
     })
     @GetMapping("/download/{filename:.+}")
     public ResponseEntity<?> downloadFile(
@@ -125,6 +117,17 @@ public class FileController {
 
             Resource resource = fileService.loadFileAsResource(filename, user.getId());
 
+            // 성능 최적화: S3 URL인 경우 백엔드를 거치지 않고 리다이렉트
+            if (resource instanceof org.springframework.core.io.UrlResource) {
+                try {
+                    return ResponseEntity.status(302)
+                            .location(resource.getURI())
+                            .build();
+                } catch (Exception e) {
+                    log.warn("Failed to get URI from UrlResource", e);
+                }
+            }
+
             File fileEntity = fileRepository.findByFilename(filename)
                     .orElse(null);
 
@@ -134,8 +137,7 @@ public class FileController {
 
             String contentDisposition = String.format(
                     "attachment; filename*=UTF-8''%s",
-                    encodedFilename
-            );
+                    encodedFilename);
 
             long contentLength = fileEntity != null ? fileEntity.getSize() : resource.contentLength();
 
@@ -198,6 +200,17 @@ public class FileController {
 
             Resource resource = fileService.loadFileAsResource(filename, user.getId());
 
+            // 성능 최적화: S3 URL인 경우 백엔드를 거치지 않고 리다이렉트
+            if (resource instanceof org.springframework.core.io.UrlResource) {
+                try {
+                    return ResponseEntity.status(302)
+                            .location(resource.getURI())
+                            .build();
+                } catch (Exception e) {
+                    log.warn("Failed to get URI from UrlResource", e);
+                }
+            }
+
             File fileEntity = fileRepository.findByFilename(filename)
                     .orElseThrow(() -> new RuntimeException("파일을 찾을 수 없습니다."));
 
@@ -208,7 +221,6 @@ public class FileController {
                 return ResponseEntity.status(415).body(errorResponse);
             }
 
-
             String originalFilename = fileEntity.getOriginalname();
             String encodedFilename = URLEncoder.encode(originalFilename, StandardCharsets.UTF_8)
                     .replaceAll("\\+", "%20");
@@ -216,8 +228,7 @@ public class FileController {
             String contentDisposition = String.format(
                     "inline; filename=\"%s\"; filename*=UTF-8''%s",
                     originalFilename,
-                    encodedFilename
-            );
+                    encodedFilename);
 
             long contentLength = fileEntity.getSize();
 
@@ -257,7 +268,7 @@ public class FileController {
         } catch (RuntimeException e) {
             log.error("파일 삭제 중 에러 발생: {}", id, e);
             String errorMessage = e.getMessage();
-            
+
             if (errorMessage != null && errorMessage.contains("찾을 수 없습니다")) {
                 Map<String, Object> errorResponse = new HashMap<>();
                 errorResponse.put("success", false);
@@ -269,7 +280,7 @@ public class FileController {
                 errorResponse.put("message", "파일을 삭제할 권한이 없습니다.");
                 return ResponseEntity.status(403).body(errorResponse);
             }
-            
+
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put("success", false);
             errorResponse.put("message", "파일 삭제 중 오류가 발생했습니다.");
