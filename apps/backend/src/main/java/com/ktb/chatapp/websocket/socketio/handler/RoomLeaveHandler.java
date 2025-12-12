@@ -20,8 +20,11 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.slf4j.MDC;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -43,9 +46,14 @@ public class RoomLeaveHandler {
     private final UserRepository userRepository;
     private final UserRooms userRooms;
     private final MessageResponseMapper messageResponseMapper;
-    
+
     @OnEvent(LEAVE_ROOM)
     public void handleLeaveRoom(SocketIOClient client, String roomId) {
+        String traceId = UUID.randomUUID().toString();
+        String apiPath = "socket/leaveRoom";
+        MDC.put("traceId", traceId);
+        MDC.put("apiPath", apiPath);
+
         try {
             String userId = getUserId(client);
             String userName = getUserName(client);
@@ -62,35 +70,37 @@ public class RoomLeaveHandler {
 
             User user = userRepository.findById(userId).orElse(null);
             Room room = roomRepository.findById(roomId).orElse(null);
-            
+
             if (user == null || room == null) {
                 log.warn("Room {} not found or user {} has no access", roomId, userId);
                 return;
             }
-            
+
             roomRepository.removeParticipant(roomId, userId);
-            
+
             client.leaveRoom(roomId);
             userRooms.remove(userId, roomId);
-            
+
             log.info("User {} left room {}", userName, room.getName());
-            
+
             log.debug("Leave room cleanup - roomId: {}, userId: {}", roomId, userId);
-            
+
             sendSystemMessage(roomId, userName + "님이 퇴장하였습니다.");
             broadcastParticipantList(roomId);
             socketIOServer.getRoomOperations(roomId)
                     .sendEvent(USER_LEFT, Map.of(
                             "userId", userId,
-                            "userName", userName
-                    ));
-            
+                            "userName", userName));
+
         } catch (Exception e) {
             log.error("Error handling leaveRoom", e);
             client.sendEvent(ERROR, Map.of("message", "채팅방 퇴장 중 오류가 발생했습니다."));
+        } finally {
+            MDC.remove("traceId");
+            MDC.remove("apiPath");
         }
     }
-    
+
     private void sendSystemMessage(String roomId, String content) {
         try {
             Message systemMessage = new Message();
@@ -114,29 +124,25 @@ public class RoomLeaveHandler {
             log.error("Error sending system message", e);
         }
     }
-    
+
     private void broadcastParticipantList(String roomId) {
         Optional<Room> roomOpt = roomRepository.findById(roomId);
         if (roomOpt.isEmpty()) {
             return;
         }
-        
-        Room room = roomOpt.get();
-        Map<String, User> participantsById = new HashMap<>();
-        userRepository.findByIdIn(room.getParticipantIds())
-                .forEach(user -> participantsById.put(user.getId(), user));
 
-        var participantList = room.getParticipantIds()
+        var participantList = roomOpt.get()
+                .getParticipantIds()
                 .stream()
                 .map(participantsById::get)
                 .filter(Objects::nonNull)
                 .map(UserResponse::from)
                 .toList();
-        
+
         if (participantList.isEmpty()) {
             return;
         }
-        
+
         socketIOServer.getRoomOperations(roomId)
                 .sendEvent(PARTICIPANTS_UPDATE, participantList);
     }
