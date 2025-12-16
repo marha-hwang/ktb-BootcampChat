@@ -17,6 +17,7 @@ import com.ktb.chatapp.util.BannedWordChecker;
 import com.ktb.chatapp.websocket.socketio.ai.AiService;
 import com.ktb.chatapp.service.SessionService;
 import com.ktb.chatapp.service.SessionValidationResult;
+import com.ktb.chatapp.service.AsyncMessagingService;
 import com.ktb.chatapp.service.RateLimitService;
 import com.ktb.chatapp.service.RateLimitCheckResult;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
@@ -41,7 +42,8 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 @RequiredArgsConstructor
 public class ChatMessageHandler {
     private final SocketIOServer socketIOServer;
-    private final MessageRepository messageRepository;
+    private final MessageRepository messageRepository; // 직접 저장은 안하지만 조회용으로 필요할수 있음 (근데 여기선 안쓰네?) - 아니 조회용으론 안쓰고 삭제용이나
+                                                       // 로드용인데 여기선 AsyncService가 저장함.
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
     private final FileRepository fileRepository;
@@ -49,6 +51,7 @@ public class ChatMessageHandler {
     private final SessionService sessionService;
     private final BannedWordChecker bannedWordChecker;
     private final RateLimitService rateLimitService;
+    private final AsyncMessagingService asyncMessagingService; // 추가
     private final MeterRegistry meterRegistry;
 
     @OnEvent(CHAT_MESSAGE)
@@ -162,10 +165,18 @@ public class ChatMessageHandler {
                 return;
             }
 
-            Message savedMessage = messageRepository.save(message);
+            // 1. 메시지 ID 미리 생성
+            if (message.getId() == null) {
+                message.setId(UUID.randomUUID().toString());
+            }
 
+            // 2. 동기 저장 대신 비동기 저장 호출 (Fire-and-Forget)
+            // MDC Context 전달
+            asyncMessagingService.saveMessage(message, MDC.getCopyOfContextMap());
+
+            // 3. Client에게는 즉시 전송 (Latency 최소화)
             socketIOServer.getRoomOperations(roomId)
-                    .sendEvent(MESSAGE, createMessageResponse(savedMessage, sender));
+                    .sendEvent(MESSAGE, createMessageResponse(message, sender));
 
             // AI 멘션 처리
             aiService.handleAIMentions(roomId, socketUser.id(), messageContent);
@@ -176,8 +187,8 @@ public class ChatMessageHandler {
             recordMessageSuccess(messageType);
             timerSample.stop(createTimer("success", messageType));
 
-            log.debug("Message processed - messageId: {}, type: {}, room: {}",
-                    savedMessage.getId(), savedMessage.getType(), roomId);
+            log.debug("Message processed (Async) - messageId: {}, type: {}, room: {}",
+                    message.getId(), message.getType(), roomId);
 
         } catch (Exception e) {
             recordError("exception");

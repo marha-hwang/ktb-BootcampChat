@@ -11,7 +11,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -174,7 +173,7 @@ public class ConnectionLoginHandler {
         new Thread(() -> {
             try {
                 Thread.sleep(Duration.ofSeconds(10));
-                existingClient.sendEvent(SESSION_ENDED, Map.of(
+                socketIOServer.getRoomOperations("user:" + userId).sendEvent(SESSION_ENDED, Map.of(
                         "reason", "duplicate_login",
                         "message", "다른 기기에서 로그인하여 현재 세션이 종료되었습니다."));
             } catch (InterruptedException e) {

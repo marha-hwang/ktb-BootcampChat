@@ -6,13 +6,12 @@ import com.ktb.chatapp.dto.MessageResponse;
 import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.MessageRepository;
-import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
+import com.ktb.chatapp.service.UserCacheService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,7 +29,7 @@ import static java.util.Collections.emptyList;
 public class MessageLoader {
 
     private final MessageRepository messageRepository;
-    private final UserRepository userRepository;
+    private final UserCacheService userCacheService; // Redis Cache
     private final MessageResponseMapper messageResponseMapper;
     private final MessageReadStatusService messageReadStatusService;
 
@@ -76,9 +75,8 @@ public class MessageLoader {
                 .filter(id -> id != null && !id.isBlank())
                 .collect(Collectors.toSet());
 
-        // 2. Fetch all users in one query (N+1 solution)
-        Map<String, User> userMap = userRepository.findAllById(senderIds).stream()
-                .collect(Collectors.toMap(User::getId, Function.identity()));
+        // 2. Fetch users using Smart Cache (Redis + DB)
+        Map<String, User> userMap = userCacheService.getUsers(senderIds);
 
         // 3. Map messages to responses using the user map
         List<MessageResponse> messageResponses = sortedMessages.stream()

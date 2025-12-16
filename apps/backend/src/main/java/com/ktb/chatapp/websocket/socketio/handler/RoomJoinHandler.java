@@ -10,6 +10,7 @@ import com.ktb.chatapp.dto.UserResponse;
 import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.model.MessageType;
 import com.ktb.chatapp.model.Room;
+import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.repository.UserRepository;
@@ -112,11 +113,15 @@ public class RoomJoinHandler {
             }
 
             // 참가자 정보 조회
-            List<UserResponse> participants = roomOpt.get().getParticipantIds()
+            Room room = roomOpt.get();
+            Map<String, User> participantsById = new HashMap<>();
+            userRepository.findByIdIn(room.getParticipantIds())
+                    .forEach(user -> participantsById.put(user.getId(), user));
+
+            List<UserResponse> participants = room.getParticipantIds()
                     .stream()
-                    .map(userRepository::findById)
-                    .filter(Optional::isPresent)
-                    .map(Optional::get)
+                    .map(participantsById::get)
+                    .filter(Objects::nonNull)
                     .map(UserResponse::from)
                     .toList();
 
