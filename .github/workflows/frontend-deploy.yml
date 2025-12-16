@@ -57,7 +57,8 @@ jobs:
         mkdir -p ~/.ssh
         ssh-keyscan -H ${{ secrets.FRONTEND_HOST }} >> ~/.ssh/known_hosts
 
+    # 명령 자체는 github에서 돌아가지만 deploy내부에 ssh실행 명령어가 존재
     - name: Deploy Frontend
       working-directory: apps/frontend
       run: |
-        make deploy DEPLOY_SERVERS="ubuntu@${{ secrets.FRONTEND_HOST }}"
+        make deploy DEPLOY_SERVERS="ec2-user@${{ secrets.FRONTEND_HOST }}" DEPLOY_PATH="/home/ec2-user/ktb-chat-frontend"
