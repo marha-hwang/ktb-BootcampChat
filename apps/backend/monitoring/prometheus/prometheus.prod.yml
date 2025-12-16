@@ -15,7 +15,7 @@ scrape_configs:
     metrics_path: '/actuator/prometheus'
     scrape_interval: 5s
     static_configs:
-      - targets: ['IP:PORT']
+      - targets: ['10.0.0.75:5001']
         labels:
           application: 'ktb-chat-backend'
           environment: 'production'

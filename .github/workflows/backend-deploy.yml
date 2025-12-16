@@ -61,7 +61,7 @@ jobs:
         mkdir -p ~/.ssh
         ssh-keyscan -H ${{ secrets.BACKEND_HOST }} >> ~/.ssh/known_hosts
 
-    # jar, Dockerfile배포하여 컨테이너에서 실행
+    # jar파일만 배포하여 실행
     - name: Deploy Backend
       working-directory: apps/backend
       run: |
