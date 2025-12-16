@@ -6,8 +6,8 @@ import CustomAvatar from './CustomAvatar';
 import ReadStatus from './ReadStatus';
 
 const UserMessage = ({
-  msg = {}, 
-  isMine = false, 
+  msg = {},
+  isMine = false,
   currentUser = null,
   onReactionAdd,
   onReactionRemove,
@@ -16,6 +16,7 @@ const UserMessage = ({
 }) => {
   // 메시지 DOM 요소에 대한 ref 생성
   const messageDomRef = useRef(null);
+
   const formattedTime = new Date(msg.timestamp).toLocaleString('ko-KR', {
     year: 'numeric',
     month: 'long',
@@ -110,8 +111,8 @@ UserMessage.defaultProps = {
   msg: {},
   isMine: false,
   currentUser: null,
-  onReactionAdd: () => {},
-  onReactionRemove: () => {},
+  onReactionAdd: () => { },
+  onReactionRemove: () => { },
   room: null
 };
 
