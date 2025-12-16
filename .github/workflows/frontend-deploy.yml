@@ -2,7 +2,7 @@ name: Frontend Deploy Service
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "githubaction_prac" ]
     paths:
       - 'apps/frontend/**'
 
