@@ -39,7 +39,7 @@ else
 fi
 
 echo "🚀 Starting server..."
-nohup node ./server.js >> "$LOG_FILE" 2>&1 &
+PORT=3000 HOSTNAME="0.0.0.0" nohup node ./server.js >> "$LOG_FILE" 2>&1 &
 NEW_PID=$!
 
 # PID 파일 저장
