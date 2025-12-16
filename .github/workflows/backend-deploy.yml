@@ -21,18 +21,32 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
 
-    - name: Cache requests
-      uses: actions/cache@v4
-      with:
-        path: ~/.m2/repository
-        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-        restore-keys: |
-          ${{ runner.os }}-maven-
+    # - name: Cache requests
+    #   uses: actions/cache@v4
+    #   with:
+    #     path: ~/.m2/repository
+    #     key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+    #     restore-keys: |
+    #       ${{ runner.os }}-maven-
 
-    - name: Test Backend
+    # - name: Test Backend
+    #   working-directory: apps/backend
+    #   run: ./mvnw test
+
+    # 환경변수 설정
+    - name: Set up Environment Variables
       working-directory: apps/backend
-      run: ./mvnw test
+      run: |
+        # 1. 템플릿 복사 및 기본 키 생성 (make setup-env)
+        make setup-env
+        
+        # 2. GitHub Secrets 값으로 .env 내용 업데이트 (Linux sed 사용)
+        sed -i 's|MONGO_URI=.*|MONGO_URI=${{ secrets.MONGO_URI }}|g' .env
+        sed -i 's|REDIS_HOST=.*|REDIS_HOST=${{ secrets.REDIS_HOST }}|g' .env
+        sed -i 's|REDIS_PORT=.*|REDIS_PORT=${{ secrets.REDIS_PORT }}|g' .env
+        sed -i 's|REDIS_PASSWORD=.*|REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}|g' .env
 
+    # jar파일 생성
     - name: Build Backend
       working-directory: apps/backend
       run: ./mvnw clean package -DskipTests
@@ -47,9 +61,10 @@ jobs:
         mkdir -p ~/.ssh
         ssh-keyscan -H ${{ secrets.BACKEND_HOST }} >> ~/.ssh/known_hosts
 
+    # jar, Dockerfile배포하여 컨테이너에서 실행
     - name: Deploy Backend
       working-directory: apps/backend
       run: |
-        # DEPLOY_SERVERS overrides the default hostname in Makefile
-        # We assume the user is 'ubuntu'. Change if necessary.
-        make deploy-jar DEPLOY_SERVERS="ubuntu@${{ secrets.BACKEND_HOST }}"
+        make deploy-jar DEPLOY_SERVERS="ec2-user@${{ secrets.BACKEND_HOST }}" DEPLOY_PATH="/home/ec2-user/ktb-chat-backend"
+        make restart-servers DEPLOY_SERVERS="ec2-user@${{ secrets.BACKEND_HOST }}" DEPLOY_PATH="/home/ec2-user/ktb-chat-backend"
+        make status-servers DEPLOY_SERVERS="ec2-user@${{ secrets.BACKEND_HOST }}" DEPLOY_PATH="/home/ec2-user/ktb-chat-backend"

@@ -3,35 +3,34 @@
 # 서버 추가 시 이 파일만 수정하면 자동으로 반영됩니다 (Prometheus 재시작 불필요)
 
 - targets:
-    - 'IP:PORT'
+    - '10.0.0.249:9100'
   labels:
     environment: 'production'
     region: 'ap-northeast-2'
-    cluster: 'backend'
-    service: 'api'
+    cluster: 'mongodb'
+    service: 'mongodb'
 
 - targets:
-    - 'IP:PORT'
+    - '10.0.0.221:9100'
   labels:
     environment: 'production'
     region: 'ap-northeast-2'
     cluster: 'frontend'
-    service: 'next'
+    service: 'frontend'
 
 - targets:
-    - 'IP:PORT'
+    - '10.0.0.218:9100'
   labels:
     environment: 'production'
     region: 'ap-northeast-2'
-    cluster: 'database'
-    service: 'mongodb'
+    cluster: 'redis'
+    service: 'redis'
 
-
-# Monitoring Server
+# TODO 백엔드 추가 필요
 - targets:
-    - 'IP:PORT'
+    - '10.0.0.75:9100'
   labels:
     environment: 'production'
     region: 'ap-northeast-2'
-    cluster: 'monitoring'
-    service: 'observability'
+    cluster: 'backend'
+    service: 'backend'
