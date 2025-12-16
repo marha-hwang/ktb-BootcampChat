@@ -1,6 +1,8 @@
+# 실행 명령어 선언
+# make는 파일을 만들기 위한 명령어 같은 디렉터리에 deploy파일이 존재하면 deploy실행안함
 .PHONY: deploy build-local
 
-# 배포 대상 서버 목록
+# 배포 대상 서버 목록 ?=을 사용하여 외부에서 주입
 DEPLOY_SERVERS ?= ktb-fe01
 DEPLOY_PATH ?= /home/ubuntu/ktb-chat-frontend
 
