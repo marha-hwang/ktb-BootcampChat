@@ -5,6 +5,7 @@ on:
     branches: [ "main", "githubaction_prac" ]
     paths:
       - 'apps/backend/**'
+  workflow_dispatch:
 
 jobs:
   backend:

@@ -5,6 +5,7 @@ on:
     branches: [ "main", "githubaction_prac" ]
     paths:
       - 'apps/frontend/**'
+  workflow_dispatch:
 
 jobs:
   frontend:
